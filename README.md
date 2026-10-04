@@ -66,6 +66,28 @@ stellar contract invoke --id <POT> --source me --network testnet -- \
   --deadline 1769904000 --title "Community solar panels"
 ```
 
+## Web app
+
+![Pledgepot web app](docs/assets/web-app.png)
+
+A crowdfunding site at `web/`:
+
+- **Campaign gallery** with funding progress, backer counts and time left, all read live from the contract.
+- **Campaign page**: back it with one-tap amounts, withdraw your pledge while it's open, and see your own pledge.
+- **Outcome-aware actions**: the creator claims after a successful campaign; backers get a one-click refund after a failed or cancelled one; the creator can cancel early.
+- **Start a campaign**: title, goal, duration and asset, with a plain-language explanation of all-or-nothing rules.
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173
+```
+
+It talks to the contract deployed on **Stellar testnet** and signs with
+[Freighter](https://www.freighter.app) (switch it to Testnet). Point it at
+another deployment with `VITE_CONTRACT_ID` (see `web/.env.example`).
+`netlify.toml` at the repo root deploys it as-is.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
