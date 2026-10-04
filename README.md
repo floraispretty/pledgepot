@@ -66,6 +66,12 @@ stellar contract invoke --id <POT> --source me --network testnet -- \
   --deadline 1769904000 --title "Community solar panels"
 ```
 
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Running a campaign](docs/running-a-campaign.md)
+- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md)
+
 ## Glossary (new to Stellar?)
 
 - **All-or-nothing**: the creator only receives money if the goal is
