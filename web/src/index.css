@@ -14,12 +14,16 @@
   --font-sans: "Nunito", system-ui, sans-serif;
 }
 body { background: var(--color-linen); color: var(--color-soil); font-family: var(--font-sans); }
-.tile { background: var(--color-card); border: 2px solid var(--color-edge); border-radius: 22px; }
-.inp { width: 100%; border: 2px solid var(--color-edge); border-radius: 14px; padding: .6rem .85rem; background: #fff; }
-.inp:focus { outline: none; border-color: var(--color-clay); }
-.pill { border-radius: 999px; padding: .6rem 1.25rem; font-weight: 800; font-size: .9rem; }
-.pill:disabled { opacity: .5; cursor: not-allowed; }
-.pill-clay { background: var(--color-clay); color: #fff; box-shadow: 0 4px 0 var(--color-clay-dark); }
-.pill-clay:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 2px 0 var(--color-clay-dark); }
-.pill-sage { background: var(--color-sage); color: #fff; }
-.pill-ghost { border: 2px solid var(--color-edge); background: #fff; }
+
+/* In the components layer so Tailwind utilities (w-*, etc.) can override these. */
+@layer components {
+  .tile { background: var(--color-card); border: 2px solid var(--color-edge); border-radius: 22px; }
+  .inp { width: 100%; border: 2px solid var(--color-edge); border-radius: 14px; padding: .6rem .85rem; background: #fff; }
+  .inp:focus { outline: none; border-color: var(--color-clay); }
+  .pill { border-radius: 999px; padding: .6rem 1.25rem; font-weight: 800; font-size: .9rem; }
+  .pill:disabled { opacity: .5; cursor: not-allowed; }
+  .pill-clay { background: var(--color-clay); color: #fff; box-shadow: 0 4px 0 var(--color-clay-dark); }
+  .pill-clay:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 2px 0 var(--color-clay-dark); }
+  .pill-sage { background: var(--color-sage); color: #fff; }
+  .pill-ghost { border: 2px solid var(--color-edge); background: #fff; }
+}
