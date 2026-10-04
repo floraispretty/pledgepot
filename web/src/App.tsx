@@ -26,7 +26,7 @@ export default function App() {
     <div className="min-h-screen">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5">
         <button className="flex items-center gap-2" onClick={() => (setOpenId(null), setCreating(false))}>
-          <img src="/favicon.svg" className="h-9 w-9" alt="" />
+          <img src={`${import.meta.env.BASE_URL}favicon.svg`} className="h-9 w-9" alt="" />
           <span className="font-head text-2xl font-extrabold text-clay">pledgepot</span>
         </button>
         <div className="flex items-center gap-3">
