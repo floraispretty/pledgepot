@@ -45,12 +45,7 @@ const getCampaign = (id: number) => pot.read<Campaign>("get_campaign", [u64(id)]
  */
 export async function scanCampaigns(batch = 10): Promise<Campaign[]> {
   const out: Campaign[] = [];
-  let count: number | null = null;
-  try {
-    count = Number(await pot.read<bigint>("campaign_count"));
-  } catch {
-    count = null;
-  }
+  const count = await pot.read<bigint>("campaign_count").then(Number, () => null);
   if (count !== null) {
     for (let start = 1; start <= count; start += batch) {
       const ids = Array.from({ length: Math.min(batch, count - start + 1) }, (_, i) => start + i);
