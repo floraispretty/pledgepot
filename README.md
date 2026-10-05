@@ -12,7 +12,7 @@ passes:
 | --- | --- |
 | **Goal met** (overfunding allowed) | The creator claims everything, once |
 | **Goal missed** | Every backer takes back exactly what they pledged |
-| **Creator cancels early** | Refunds open immediately |
+| **Creator cancels early** | Refunds open immediately (only while the goal isn't met yet) |
 
 There's no way for a creator to walk away with a half-funded campaign,
 and no backer's refund depends on the creator doing anything.
@@ -36,13 +36,14 @@ State is computed from the clock and the totals, so nobody has to
 
 | Function | Who signs | Notes |
 | --- | --- | --- |
-| `create_campaign(creator, token, goal, deadline, title)` | creator | Title ≤ 100 chars |
+| `create_campaign(creator, token, goal, deadline, title)` | creator | Title ≤ 100 chars; deadline within 365 days |
 | `pledge(campaign_id, backer, amount)` | backer | While open; pledges add up |
 | `unpledge(campaign_id, backer, amount)` | backer | While open; partial or full |
 | `claim(campaign_id)` | creator | Succeeded only, once |
-| `refund(campaign_id, backer)` | backer | Failed/cancelled only, once |
-| `cancel(campaign_id)` | creator | While open |
-| `state`, `get_campaign`, `pledge_of` | anyone | Read state |
+| `refund(campaign_id, backer)` | backer | Failed/cancelled only, once; lowers the public totals |
+| `cancel(campaign_id)` | creator | While open and below the goal |
+| `set_link(campaign_id, url)` | creator | Optional description link, ≤ 200 chars |
+| `state`, `get_campaign`, `pledge_of`, `link`, `campaign_count` | anyone | Read state |
 
 Errors: `CampaignNotFound (1)`, `InvalidCampaign (2)`, `InvalidAmount (3)`,
 `NotOpen (4)`, `NotSucceeded (5)`, `NotFailed (6)`, `NothingPledged (7)`,
@@ -56,7 +57,7 @@ Events (topics → data): `("pot","created")`, `("pot","pledged", id)`,
 
 ```bash
 cd contracts
-cargo test             # 12 unit tests
+cargo test             # 17 unit tests
 stellar contract build
 stellar contract deploy --wasm target/wasm32v1-none/release/pledgepot.wasm \
   --source me --network testnet
@@ -70,11 +71,16 @@ stellar contract invoke --id <POT> --source me --network testnet -- \
 
 ![Pledgepot web app](docs/assets/web-app.png)
 
+The site has three pages: **Home** (what it does, with live testnet data), **App** (the tool itself) and **Docs** (getting started, concepts, reference and FAQ).
+
+![pledgepot app page](docs/assets/web-app-page.png)
+
 A crowdfunding site at `web/`:
 
 - **Campaign gallery** with funding progress, backer counts and time left, all read live from the contract.
 - **Campaign page**: back it with one-tap amounts, withdraw your pledge while it's open, and see your own pledge.
-- **Outcome-aware actions**: the creator claims after a successful campaign; backers get a one-click refund after a failed or cancelled one; the creator can cancel early.
+- **Outcome-aware actions**: the creator claims after a successful campaign; backers get a one-click refund after a failed or cancelled one; the creator can cancel early (until the goal is met).
+- **Shareable campaigns**: `#/app?c=<id>` opens a campaign directly, with recent pledges from contract events and a refund reminder for backers of failed campaigns.
 - **Start a campaign**: title, goal, duration and asset, with a plain-language explanation of all-or-nothing rules.
 
 ```bash

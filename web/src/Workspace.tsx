@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { xdr } from "@stellar/stellar-sdk";
-import { pot, scanCampaigns, stateOf, type Campaign } from "./pot";
+import { campaignLink, pot, recentPledges, scanCampaigns, stateOf, type Campaign, type PledgeEvent } from "./pot";
+import { routeParams } from "./lib/router";
 import { addr, i128, str, txLink, u64, XLM_SAC } from "./lib/stellar";
 import { fromUnits, short, timeLeft, toUnits } from "./lib/format";
 import { useWallet } from "./lib/useWallet";
@@ -11,13 +12,32 @@ const unit = (t: string) => (t === XLM_SAC ? "XLM" : short(t));
 
 export function Workspace({ wallet }: { wallet: Wallet }) {
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
-  const [openId, setOpenId] = useState<bigint | null>(null);
+  // #/app?c=<id> opens a campaign directly, so campaign links can be shared.
+  const [openId, setOpenIdState] = useState<bigint | null>(() => {
+    const c = routeParams().get("c");
+    return c && /^\d+$/.test(c) ? BigInt(c) : null;
+  });
+  const setOpenId = (id: bigint | null) => {
+    setOpenIdState(id);
+    history.replaceState(null, "", `${window.location.pathname}#/app${id === null ? "" : `?c=${id}`}`);
+  };
   const [creating, setCreating] = useState(false);
 
   const refresh = useCallback(async () => setCampaigns(await scanCampaigns()), []);
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Backers with money waiting in failed or cancelled campaigns get a reminder.
+  const [refundable, setRefundable] = useState<{ c: Campaign; amount: bigint }[]>([]);
+  useEffect(() => {
+    const me = wallet.address;
+    if (!me || !campaigns) return setRefundable([]);
+    const failed = campaigns.filter((c) => stateOf(c) === "Failed");
+    Promise.all(
+      failed.map(async (c) => ({ c, amount: await pot.read<bigint>("pledge_of", [u64(c.id), addr(me)]).catch(() => 0n) })),
+    ).then((all) => setRefundable(all.filter((x) => x.amount > 0n)));
+  }, [wallet.address, campaigns]);
 
   const open = campaigns?.find((c) => c.id === openId) ?? null;
 
@@ -31,7 +51,18 @@ export function Workspace({ wallet }: { wallet: Wallet }) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-5 pb-16">
+      <div className="mx-auto max-w-6xl px-5 pb-16">
+        {refundable.length > 0 && (
+          <div className="tile mb-6 flex flex-wrap items-center justify-between gap-3 border-clay/40 bg-clay/5 p-4" role="status">
+            <p className="text-sm">
+              <b>You have refunds waiting:</b>{" "}
+              {refundable.map(({ c, amount }) => `${fromUnits(amount)} ${unit(c.token)} in “${c.title}”`).join(", ")}.
+            </p>
+            <button className="pill pill-clay" onClick={() => (setCreating(false), setOpenId(refundable[0].c.id))}>
+              Get my refund
+            </button>
+          </div>
+        )}
         {creating ? (
           <CreateCampaign wallet={wallet} onCreated={(id) => (refresh(), setCreating(false), setOpenId(id))} />
         ) : open ? (
@@ -83,7 +114,7 @@ export function Workspace({ wallet }: { wallet: Wallet }) {
             </div>
           </>
         )}
-      </main>
+      </div>
     </div>
   );
 }
@@ -164,7 +195,19 @@ function CampaignPage({ c, wallet, onChange, onBack }: { c: Campaign; wallet: Wa
     }, (r) => ({ text, hash: r.hash }));
 
   const isCreator = wallet.address === c.creator;
-
+  const [link, setLink] = useState<{ supported: boolean; url: string | null }>({ supported: false, url: null });
+  const [linkDraft, setLinkDraft] = useState("");
+  const [pledges, setPledges] = useState<PledgeEvent[] | null>(null);
+  useEffect(() => {
+    campaignLink(c.id).then(setLink);
+    recentPledges(c.id).then(setPledges).catch(() => setPledges([]));
+  }, [c]);
+  const [shared, setShared] = useState(false);
+  const share = () =>
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      setShared(true);
+      setTimeout(() => setShared(false), 1500);
+    });
   return (
     <div className="py-6">
       <button className="text-sm text-muted underline" onClick={onBack}>
@@ -175,8 +218,16 @@ function CampaignPage({ c, wallet, onChange, onBack }: { c: Campaign; wallet: Wa
           <span className={`rounded-full px-3 py-1 text-xs font-bold ${STATE_STYLE[state]}`}>{state}</span>
           <h1 className="mt-4 font-head text-4xl font-extrabold leading-tight">{c.title}</h1>
           <p className="mt-2 text-sm text-muted">
-            Started by <span className="font-mono">{short(c.creator, 6)}</span> · campaign #{String(c.id)}
+            Started by <span className="font-mono">{short(c.creator, 6)}</span> · campaign #{String(c.id)} ·{" "}
+            <button className="underline" onClick={share}>
+              {shared ? "link copied" : "copy link"}
+            </button>
           </p>
+          {link.url && /^https?:\/\//.test(link.url) && (
+            <a className="mt-3 inline-block font-semibold text-clay underline" href={link.url} target="_blank" rel="noreferrer noopener">
+              More about this campaign ↗
+            </a>
+          )}
           <div className="mt-8">
             <Progress c={c} big />
           </div>
@@ -192,6 +243,40 @@ function CampaignPage({ c, wallet, onChange, onBack }: { c: Campaign; wallet: Wa
               </div>
             ))}
           </div>
+          <div className="mt-8">
+            <h2 className="font-head text-lg font-bold">Recent pledges</h2>
+            {pledges === null ? (
+              <p className="mt-2 text-sm text-muted">Loading…</p>
+            ) : pledges.length === 0 ? (
+              <p className="mt-2 text-sm text-muted">No pledges in the last week.</p>
+            ) : (
+              <ul className="mt-2 divide-y divide-edge text-sm">
+                {pledges.slice(0, 10).map((p, i) => (
+                  <li key={`${p.ledger}-${i}`} className="flex justify-between py-2">
+                    <span className="font-mono text-xs">{short(p.backer, 6)}</span>
+                    <b>
+                      {fromUnits(p.amount)} {unit(c.token)}
+                    </b>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-2 text-xs text-muted">From the contract's events; public RPC nodes keep about a week of them.</p>
+          </div>
+          {isCreator && link.supported && (
+            <form
+              className="mt-8 flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                run("link", "set_link", () => [u64(c.id), str(linkDraft.trim())], "Link saved.");
+              }}
+            >
+              <input className="inp" placeholder="https://… page describing the campaign" value={linkDraft} onChange={(e) => setLinkDraft(e.target.value)} />
+              <button className="pill pill-ghost shrink-0" disabled={!!act.busy || !/^https?:\/\/\S+$/.test(linkDraft.trim())}>
+                Save link
+              </button>
+            </form>
+          )}
         </section>
 
         <aside className="tile space-y-4 p-6">
@@ -227,7 +312,7 @@ function CampaignPage({ c, wallet, onChange, onBack }: { c: Campaign; wallet: Wa
                   Withdraw my pledge
                 </button>
               )}
-              {isCreator && (
+              {isCreator && c.pledged < c.goal && (
                 <button
                   className="w-full text-sm text-muted underline"
                   onClick={() => confirm("Cancel the campaign? Backers can refund immediately.") && run("cancel", "cancel", () => [u64(c.id)], "Campaign cancelled. Refunds are open.")}

@@ -51,6 +51,8 @@ pub enum DataKey {
     NextId,
     Campaign(u64),
     Pledge(u64, Address),
+    /// Optional description link set by the creator.
+    Link(u64),
 }
 
 #[contracterror]
@@ -65,6 +67,9 @@ pub enum Error {
     NotFailed = 6,
     NothingPledged = 7,
     TitleTooLong = 8,
+    /// The goal is already met, so the campaign can no longer be cancelled.
+    GoalReached = 9,
+    LinkTooLong = 10,
 }
 
 #[contractevent(topics = ["pot", "created"], data_format = "single-value")]
@@ -118,6 +123,12 @@ const DAY_IN_LEDGERS: u32 = 17_280;
 const BUMP_THRESHOLD: u32 = 30 * DAY_IN_LEDGERS;
 const BUMP_TO: u32 = 180 * DAY_IN_LEDGERS;
 pub const MAX_TITLE_LEN: u32 = 100;
+pub const MAX_LINK_LEN: u32 = 200;
+/// Longest campaign accepted, from creation to deadline.
+pub const MAX_CAMPAIGN_SECS: u64 = 365 * 86_400;
+/// How long after the deadline pledges and campaigns must stay live, so
+/// backers have time to refund and creators to claim.
+const SETTLE_WINDOW_SECS: u64 = 60 * 86_400;
 
 #[contract]
 pub struct Pledgepot;
@@ -133,7 +144,8 @@ impl Pledgepot {
         title: String,
     ) -> Result<u64, Error> {
         creator.require_auth();
-        if goal <= 0 || deadline <= env.ledger().timestamp() {
+        let now = env.ledger().timestamp();
+        if goal <= 0 || deadline <= now || deadline - now > MAX_CAMPAIGN_SECS {
             return Err(Error::InvalidCampaign);
         }
         if title.len() > MAX_TITLE_LEN {
@@ -177,7 +189,7 @@ impl Pledgepot {
         if previous == 0 {
             campaign.backers += 1;
         }
-        set_pledge(&env, campaign_id, &backer, previous + amount);
+        set_pledge(&env, &campaign, &backer, previous + amount);
         campaign.pledged += amount;
         save(&env, &campaign);
         Pledged {
@@ -207,7 +219,7 @@ impl Pledgepot {
         }
 
         let remaining = current - amount;
-        set_pledge(&env, campaign_id, &backer, remaining);
+        set_pledge(&env, &campaign, &backer, remaining);
         if remaining == 0 {
             campaign.backers -= 1;
         }
@@ -252,7 +264,7 @@ impl Pledgepot {
     /// Backer takes back their full pledge from a failed or cancelled campaign.
     pub fn refund(env: Env, campaign_id: u64, backer: Address) -> Result<i128, Error> {
         backer.require_auth();
-        let campaign = Self::get_campaign(env.clone(), campaign_id)?;
+        let mut campaign = Self::get_campaign(env.clone(), campaign_id)?;
         if state(&env, &campaign) != State::Failed {
             return Err(Error::NotFailed);
         }
@@ -260,7 +272,11 @@ impl Pledgepot {
         if amount == 0 {
             return Err(Error::NothingPledged);
         }
-        set_pledge(&env, campaign_id, &backer, 0);
+        set_pledge(&env, &campaign, &backer, 0);
+        // Keep the public totals honest: refunded money is no longer pledged.
+        campaign.pledged -= amount;
+        campaign.backers -= 1;
+        save(&env, &campaign);
         token::Client::new(&env, &campaign.token).transfer(
             &env.current_contract_address(),
             &backer,
@@ -282,6 +298,11 @@ impl Pledgepot {
         if state(&env, &campaign) != State::Open {
             return Err(Error::NotOpen);
         }
+        // Backers who got the campaign over the line can rely on it: once
+        // the goal is met it runs to its deadline.
+        if campaign.pledged >= campaign.goal {
+            return Err(Error::GoalReached);
+        }
         campaign.cancelled = true;
         save(&env, &campaign);
         CancelledEvent { campaign_id }.publish(&env);
@@ -295,6 +316,31 @@ impl Pledgepot {
 
     pub fn pledge_of(env: Env, campaign_id: u64, backer: Address) -> i128 {
         pledge_of(&env, campaign_id, &backer)
+    }
+
+    /// Attach a link (description page, IPFS, …) to a campaign. Creator only.
+    pub fn set_link(env: Env, campaign_id: u64, url: String) -> Result<(), Error> {
+        let campaign = Self::get_campaign(env.clone(), campaign_id)?;
+        campaign.creator.require_auth();
+        if url.len() > MAX_LINK_LEN {
+            return Err(Error::LinkTooLong);
+        }
+        let key = DataKey::Link(campaign_id);
+        env.storage().persistent().set(&key, &url);
+        let to = ttl_until(&env, campaign.deadline);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, BUMP_THRESHOLD.min(to), to);
+        Ok(())
+    }
+
+    pub fn link(env: Env, campaign_id: u64) -> Option<String> {
+        env.storage().persistent().get(&DataKey::Link(campaign_id))
+    }
+
+    /// Number of campaigns ever created; ids run from 1 to this value.
+    pub fn campaign_count(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::NextId).unwrap_or(0)
     }
 
     pub fn get_campaign(env: Env, campaign_id: u64) -> Result<Campaign, Error> {
@@ -326,24 +372,36 @@ fn pledge_of(env: &Env, id: u64, backer: &Address) -> i128 {
         .unwrap_or(0)
 }
 
-fn set_pledge(env: &Env, id: u64, backer: &Address, amount: i128) {
-    let key = DataKey::Pledge(id, backer.clone());
+/// Ledgers an entry must live to cover the deadline plus the settle window
+/// (ledgers close about every 5 s): at least BUMP_TO, at most the network max.
+fn ttl_until(env: &Env, deadline: u64) -> u32 {
+    let secs = deadline.saturating_sub(env.ledger().timestamp()) + SETTLE_WINDOW_SECS;
+    let ledgers = u32::try_from(secs / 5).unwrap_or(u32::MAX);
+    ledgers.max(BUMP_TO).min(env.storage().max_ttl())
+}
+
+fn set_pledge(env: &Env, c: &Campaign, backer: &Address, amount: i128) {
+    let key = DataKey::Pledge(c.id, backer.clone());
     if amount == 0 {
         env.storage().persistent().remove(&key);
     } else {
         env.storage().persistent().set(&key, &amount);
+        let to = ttl_until(env, c.deadline);
         env.storage()
             .persistent()
-            .extend_ttl(&key, BUMP_THRESHOLD, BUMP_TO);
+            .extend_ttl(&key, BUMP_THRESHOLD.min(to), to);
     }
 }
 
 fn save(env: &Env, c: &Campaign) {
     let key = DataKey::Campaign(c.id);
     env.storage().persistent().set(&key, c);
+    let to = ttl_until(env, c.deadline);
     env.storage()
         .persistent()
-        .extend_ttl(&key, BUMP_THRESHOLD, BUMP_TO);
+        .extend_ttl(&key, BUMP_THRESHOLD.min(to), to);
+    // The instance holds the id counter; keep it alive on every write.
+    env.storage().instance().extend_ttl(BUMP_THRESHOLD, BUMP_TO);
 }
 
 fn next_id(env: &Env) -> u64 {

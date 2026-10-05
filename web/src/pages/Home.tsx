@@ -5,10 +5,11 @@ import { fromUnits, timeLeft } from "../lib/format";
 import { Link, useTitle } from "../lib/router";
 
 export function Home() {
+  const [failed, setFailed] = useState(false);
   useTitle("pledgepot · all-or-nothing crowdfunding on Stellar");
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
   useEffect(() => {
-    scanCampaigns().then(setCampaigns).catch(() => setCampaigns([]));
+    scanCampaigns().then(setCampaigns).catch(() => setFailed(true));
   }, []);
   const featured = campaigns?.find((c) => stateOf(c) === "Open") ?? campaigns?.[0];
   const STATS: [string, string][] = [
@@ -35,6 +36,14 @@ export function Home() {
               </div>
             ))}
           </dl>
+          {failed && (
+            <p className="mt-6 text-sm opacity-80" role="status">
+              Couldn’t reach Stellar testnet, so live numbers aren’t shown.{" "}
+              <button className="font-semibold underline" onClick={() => window.location.reload()}>
+                Retry
+              </button>
+            </p>
+          )}
         </div>
         <div className="tile p-7">
           {featured ? (

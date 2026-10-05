@@ -190,11 +190,11 @@ fn no_pledging_or_withdrawing_after_the_deadline() {
 #[test]
 fn cancelling_opens_refunds_immediately() {
     let s = setup();
-    s.pot.pledge(&s.id, &s.alice, &GOAL);
+    s.pot.pledge(&s.id, &s.alice, &(GOAL - 1));
     s.pot.cancel(&s.id);
 
     assert_eq!(s.pot.state(&s.id), State::Failed);
-    assert_eq!(s.pot.refund(&s.id, &s.alice), GOAL);
+    assert_eq!(s.pot.refund(&s.id, &s.alice), GOAL - 1);
     assert_eq!(s.pot.try_cancel(&s.id), Err(Ok(Error::NotOpen)));
     assert_eq!(
         s.pot.try_pledge(&s.id, &s.bob, &10),
@@ -231,4 +231,86 @@ fn only_the_creator_can_claim() {
     after_deadline(&s);
     s.env.set_auths(&[]);
     s.pot.claim(&s.id);
+}
+
+#[test]
+fn a_funded_campaign_cannot_be_cancelled() {
+    let s = setup();
+    s.pot.pledge(&s.id, &s.alice, &GOAL);
+    assert_eq!(s.pot.try_cancel(&s.id), Err(Ok(Error::GoalReached)));
+    // Dropping back under the goal makes cancelling possible again.
+    s.pot.unpledge(&s.id, &s.alice, &1);
+    s.pot.cancel(&s.id);
+}
+
+#[test]
+fn refunds_lower_the_public_totals() {
+    let s = setup();
+    s.pot.pledge(&s.id, &s.alice, &300);
+    s.pot.pledge(&s.id, &s.bob, &200);
+    after_deadline(&s);
+    s.pot.refund(&s.id, &s.alice);
+    let c = s.pot.get_campaign(&s.id);
+    assert_eq!((c.pledged, c.backers), (200, 1));
+    s.pot.refund(&s.id, &s.bob);
+    let c = s.pot.get_campaign(&s.id);
+    assert_eq!((c.pledged, c.backers), (0, 0));
+}
+
+#[test]
+fn campaigns_are_capped_at_a_year() {
+    let s = setup();
+    let title = String::from_str(&s.env, "Far future");
+    assert_eq!(
+        s.pot.try_create_campaign(
+            &s.creator,
+            &s.token,
+            &GOAL,
+            &(NOW + MAX_CAMPAIGN_SECS + 1),
+            &title
+        ),
+        Err(Ok(Error::InvalidCampaign))
+    );
+    s.pot.create_campaign(
+        &s.creator,
+        &s.token,
+        &GOAL,
+        &(NOW + MAX_CAMPAIGN_SECS),
+        &title,
+    );
+    assert_eq!(s.pot.campaign_count(), 2);
+}
+
+#[test]
+fn creators_can_attach_a_link() {
+    let s = setup();
+    assert_eq!(s.pot.link(&s.id), None);
+    let url = String::from_str(&s.env, "https://example.org/solar");
+    s.pot.set_link(&s.id, &url);
+    assert_eq!(s.pot.link(&s.id), Some(url));
+    let long = String::from_str(&s.env, &"x".repeat(201));
+    assert_eq!(
+        s.pot.try_set_link(&s.id, &long),
+        Err(Ok(Error::LinkTooLong))
+    );
+}
+
+#[test]
+fn pledges_outlive_a_long_campaign() {
+    let s = setup();
+    let id = s.pot.create_campaign(
+        &s.creator,
+        &s.token,
+        &GOAL,
+        &(NOW + 300 * DAY),
+        &String::from_str(&s.env, "Long one"),
+    );
+    s.pot.pledge(&id, &s.alice, &10);
+    // Jump past the old 180-day pledge TTL and the deadline; the backer can
+    // still refund the failed campaign.
+    s.env.ledger().with_mut(|l| {
+        l.timestamp = NOW + 301 * DAY;
+        l.sequence_number += 301 * 17_280;
+    });
+    assert_eq!(s.pot.refund(&id, &s.alice), 10);
 }
