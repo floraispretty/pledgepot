@@ -1,6 +1,7 @@
 import { CONTRACT_ID } from "../pot";
 import { contractLink } from "../lib/stellar";
-import { Link, useTitle } from "../lib/router";
+import { useEffect } from "react";
+import { Link, useSection, useTitle } from "../lib/router";
 
 const SECTIONS = [
   ["start", "Getting started"],
@@ -11,23 +12,19 @@ const SECTIONS = [
 
 export function Docs() {
   useTitle("Docs · pledgepot");
+  const section = useSection();
+  useEffect(() => {
+    if (section) document.getElementById(section)?.scrollIntoView({ behavior: "smooth" });
+  }, [section]);
   return (
     <div className="mx-auto grid max-w-6xl gap-12 px-5 py-14 lg:grid-cols-[210px_1fr]">
       <aside className="hidden lg:block">
         <nav className="sticky top-24 space-y-1 text-sm">
           <p className="mb-3 px-3 text-xs font-extrabold uppercase tracking-[0.18em] text-sage">On this page</p>
           {SECTIONS.map(([id, label]) => (
-            <a
-              key={id}
-              href="#/docs"
-              onClick={(e) => {
-                e.preventDefault();
-                document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-              }}
-              className="block rounded-lg px-3 py-2 text-soil hover:bg-card"
-            >
+            <Link key={id} to={`/docs/${id}`} className="block rounded-lg px-3 py-2 text-soil hover:bg-card">
               {label}
-            </a>
+            </Link>
           ))}
         </nav>
       </aside>
@@ -164,10 +161,15 @@ const REFERENCE: [string, string, string][] = [
   [
     "cancel(campaign_id)",
     "creator",
-    "Cancels the campaign so backers can refund"
+    "Cancels the campaign so backers can refund (only while below the goal)"
   ],
   [
-    "state · pledge_of · get_campaign",
+    "set_link(campaign_id, url)",
+    "creator",
+    "Attaches a description link"
+  ],
+  [
+    "state · pledge_of · get_campaign · link · campaign_count",
     "—",
     "Read state"
   ]
@@ -184,7 +186,7 @@ const FAQ: [string, string][] = [
   ],
   [
     "What happens if the creator cancels?",
-    "The campaign counts as failed and every backer can refund their pledge."
+    "The campaign counts as failed and every backer can refund their pledge. Once the goal is met the creator can no longer cancel, so the campaign runs to its deadline."
   ],
   [
     "Can I change my pledge?",
